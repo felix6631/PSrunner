@@ -1,5 +1,6 @@
 #include "../header/problem.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>   /* isspace */
@@ -75,21 +76,21 @@ void ProblemFree(Problem* p) {
  *
  *  ┌─ YOUR TASK ─────────────────────────────────────────────────────────┐
  *  │                                                                     │
- *  │  Compare two strings after normalising whitespace, the same way    │
- *  │  most online judges do it. Return 1 if they match, 0 if not.       │
+ *  │  Compare two strings after normalising whitespace, the same way     │
+ *  │  most online judges do it. Return 1 if they match, 0 if not.        │
  *  │                                                                     │
  *  │  Normalisation rules:                                               │
  *  │    1. Treat \r\n the same as \n  (Windows line endings)             │
  *  │    2. Strip trailing spaces/tabs from each line                     │
  *  │    3. Ignore trailing blank lines at the end of the string          │
  *  │                                                                     │
- *  │  Suggested approach (PS-style, no extra allocation):               │
+ *  │  Suggested approach (PS-style, no extra allocation):                │
  *  │    Walk both strings in parallel with two pointers (pa, pe).        │
  *  │    At each step, skip trailing whitespace on the current line,      │
  *  │    then compare characters until \n or \0.                          │
  *  │                                                                     │
  *  │  Useful C functions:                                                │
- *  │    isspace(c)     — true for ' ', '\t', '\r', '\n', etc.           │
+ *  │    isspace(c)     — true for ' ', '\t', '\r', '\n', etc.            │
  *  │    strchr(s, c)   — find next occurrence of character c in s        │
  *  │    strncmp(a,b,n) — compare at most n characters                    │
  *  │                                                                     │
@@ -97,9 +98,22 @@ void ProblemFree(Problem* p) {
 
 int OutputMatches(const char* actual, const char* expected) {
     /* TODO: implement normalised string comparison — see guide above */
-    (void)actual;
-    (void)expected;
-    return 0;
+    int pa = 0, pe = 0;
+    char* nextspace = (char*)expected;
+    int lena = strlen(actual), lene = strlen(expected);
+
+    while(pa < lena && pe < lene) {
+        while(isspace(actual[pa])) pa++;
+        while(isspace(expected[pe])) pe++;
+        while(!isspace(*nextspace)) nextspace++;
+        if (strncmp(actual+pa, expected+pe, nextspace-(expected+pe)) != 0 )
+            return 0;
+
+        pa++; pe++; nextspace++;
+    }    
+    
+    
+    return 1;
 }
 
 
@@ -160,3 +174,16 @@ int GradeProblem(const char*    solutionCmd,
     }
     return accepted;
 }
+
+#ifdef DEBUG_PROBLEM
+int main(void) {
+    puts("Debug INFO");
+    printf("Source : %s\n",__FILE__);
+    printf("Compiled : %s at %s\n",__DATE__,__TIME__);
+    puts("OutputMatches Test");
+    printf("Test 1: %s\n",1 == OutputMatches("010 10 1 2 3", "010 10 1 2 3") ? "Pass" : "Fail");
+    printf("Test 2: %s\n",0 == OutputMatches("010 10 1 2 3", "010 11 3 2 1") ? "Pass" : "Fail");
+    printf("Test 3: %s\n",0 == OutputMatches("010 10 1 2 3", "1234 567 891") ? "Pass" : "Fail");
+    return 0;
+}
+#endif // DEBUG_PROBLEM
