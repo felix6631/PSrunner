@@ -2,15 +2,11 @@
 
 ## What This Project Is
 
-PSrunner is a **TUI (Terminal User Interface) program written in pure C** for grading algorithm/problem-solving submissions. It targets macOS, Linux, and Windows.
+PSrunner is a **program written in pure C** for grading algorithm/problem-solving submissions. It targets macOS, Linux, and Windows.
 
 The project has **two goals that run in parallel**:
-1. Build a working PS-grader TUI from scratch
-2. Learn systems programming in C by implementing platform-specific code yourself
+- Build a working PS-grader CLI program from scratch
 
-Because of goal 2, many functions are intentionally left as stubs with detailed comment guides. **Do not implement those stubs on the author's behalf** — the point is for them to do it.
-
----
 
 ## Project Structure
 
@@ -23,17 +19,19 @@ PSrunner/
 ├── header/
 │   ├── angle.h         # Angle type alias (typedef double Angle)
 │   ├── rect.h          # Rect struct + layout helper declarations
-│   ├── tui.h           # Full TUI interface — types, macros, declarations
+│   ├── loader.h        # GetExeDir, CompileSolution, LoadProblem — CLI support module
+│   ├── tui.h           # Full TUI interface — types, macros, declarations (learning module, not used in main CLI)
 │   ├── vector2.h       # Vector2 struct + all function declarations
 │   ├── runner.h        # RunProcess, RunResult, Verdict — process execution
 │   └── problem.h       # TestCase, Problem, grading pipeline declarations
 └── src/
-    ├── main.c          # Entry point (stub — not yet implemented)
+    ├── main.c          # CLI entry point — arg parsing, compile, grade, print results
+    ├── loader.c        # GetExeDir, CompileSolution, LoadProblem
     ├── rect.c          # Rect geometry implementation (complete — read as reference)
-    ├── tui.c           # TUI implementation (partially complete — see below)
+    ├── tui.c           # TUI implementation (learning module — not part of CLI flow)
     ├── vector2.c       # Vector2 implementation (complete)
-    ├── runner.c        # Process execution (RunProcess is a TODO)
-    └── problem.c       # Grading pipeline (OutputMatches + GradeTestCase are TODOs)
+    ├── runner.c        # Process execution (RunProcess complete for POSIX)
+    └── problem.c       # Grading pipeline (OutputMatches + GradeTestCase complete)
 ```
 
 ---
@@ -41,11 +39,10 @@ PSrunner/
 ## Key Design Decisions
 
 - **Headers live in `header/`**; source files include via `../header/`.
-- **OOP-inspired style**: each module exposes free functions (`V2shift`, `TUImoveCursor`, …) and, where applicable, wires those same functions into struct method pointers so callers can use either style.
+- **OOP-inspired style**: each module exposes free functions (`V2shift`, …) and, where applicable, wires those same functions into struct method pointers so callers can use either style.
 - **`Vector2` is heap-allocated** via `V2create()` / `V2delete()`. `volatile int heapCounterVector2` tracks live allocations (manual memory tracking, not a leak detector).
 - **`DEBUG_VECTOR2` macro** compiles a standalone `main()` in `vector2.c` for module-level testing.
-- **Platform detection** via `TUI_POSIX` / `TUI_WINDOWS` macros defined in `tui.h`, and `RUNNER_POSIX` / `RUNNER_WINDOWS` defined locally in `runner.c`. All platform-specific includes are gated behind these.
-- **ANSI escape codes** handle all cursor/color/screen operations — they work on POSIX natively and on Windows 10+ after `ENABLE_VIRTUAL_TERMINAL_PROCESSING` is set (done in `TUIinit`).
+- **Platform detection** via `RUNNER_POSIX` / `RUNNER_WINDOWS` macros defined locally in `runner.c`. All platform-specific includes are gated behind these.
 - **No external libraries** — stdlib only (`stdio.h`, `stdlib.h`, `math.h`, POSIX/Windows syscall headers).
 
 ---
@@ -78,9 +75,9 @@ PSrunner/
 
 ---
 
-### `rect` — Complete (read as reference)
+### `rect` — Complete (read as reference, not used in CLI flow)
 
-`Rect` is an axis-aligned rectangle in terminal coordinate space (`int x, y, w, h`). There are no TODOs here — `rect.c` is meant to be read as a reference for C struct usage and simple coordinate geometry.
+`Rect` is an axis-aligned rectangle (`int x, y, w, h`). There are no TODOs here — `rect.c` is meant to be read as a reference for C struct usage and simple coordinate geometry.
 
 | Function | Description |
 |---|---|
@@ -93,11 +90,13 @@ PSrunner/
 | `RectSplitV(r, at, left, right)` | Split vertically: left gets `at` columns, right gets the rest |
 | `RectInset(r, margin)` | Shrink on all sides — use to get content area inside a border |
 
-`Rect` is the layout primitive everything else will be built on top of. Before you can draw a panel or a box, you need a rect that describes where it lives.
+`Rect` is a coordinate geometry primitive. It was originally a layout building block for the TUI; now it serves as a reference module only.
 
 ---
 
-### `tui` — Partially complete
+### `tui` — Learning module (not part of CLI flow)
+
+The TUI module is kept as a standalone learning exercise in terminal/syscall concepts. The main program no longer uses it.
 
 #### Fully implemented (ANSI-based, cross-platform)
 
@@ -110,9 +109,9 @@ PSrunner/
 
 `TUIsetStyle` builds a full SGR (`\033[…m`) parameter string from a `TUIStyle` struct (`fg`, `bg`, `bold`, `underline`, `italic`, `blink`, `reverse`). Colors map to the standard ANSI 4-bit palette via `TUIColor` enum.
 
-#### Left as stubs — author's learning tasks
+#### Left as stubs — author's learning tasks (optional; not required for CLI)
 
-**Do not implement these.** Each has a detailed guide comment in `tui.c`.
+**Do not implement these as part of the main program.** Each has a detailed guide comment in `tui.c`.
 
 | Function | POSIX concept to learn | Windows concept to learn |
 |---|---|---|
@@ -183,9 +182,29 @@ This module glues test-case data to the runner and produces verdicts.
 
 ---
 
-### `main.c` — Stub
+### `loader` — Complete
 
-Not yet implemented.
+Bridges the OS and the grading pipeline.
+
+| Function | What it does |
+|---|---|
+| `GetExeDir(buf, size)` | Fills `buf` with the directory of the running binary (Linux: `/proc/self/exe`, macOS: `_NSGetExecutablePath`, Windows: `GetModuleFileName`) |
+| `CompileSolution(src, out, errMsg, errMsgSize)` | Shells out to `gcc`/`g++`, captures compiler output, returns 0 on success |
+| `LoadProblem(dir, limitMs)` | Scans `dir` for `N.in`/`N.out` pairs, builds and returns a `Problem*` |
+
+---
+
+### `main.c` — Complete
+
+```
+Usage: psrunner <answer_file> <problem_number>
+```
+
+- Calls `GetExeDir` to find where the binary lives
+- Looks for test cases in `<exe_dir>/<problem_number>/` (files `1.in`/`1.out`, `2.in`/`2.out`, …)
+- Compiles `<answer_file>` with `gcc`/`g++` to a temp binary
+- Runs `GradeProblem` and prints a colour-coded result table
+- Exits 0 if all cases pass, 1 otherwise
 
 ---
 
@@ -194,16 +213,20 @@ Not yet implemented.
 Makefile is empty. Compile manually:
 
 ```sh
-# Full build (macOS/Linux) — add new modules as they are written
-gcc src/main.c src/tui.c src/vector2.c src/rect.c src/runner.c src/problem.c -lm -o psrunner
+# Full CLI build (macOS/Linux)
+gcc src/main.c src/loader.c src/vector2.c src/runner.c src/problem.c -lm -o psrunner
 
 # vector2 standalone test
 gcc -DDEBUG_VECTOR2 src/vector2.c -lm -o vector2_test
+
+# problem module standalone test
+gcc -DDEBUG_PROBLEM src/problem.c src/runner.c src/vector2.c -lm -o problem_test
+
+# TUI learning module (separate; not linked into main binary)
+gcc src/tui.c src/vector2.c src/rect.c -lm -o tui_test
 ```
 
 Expected warnings on a full build before the stubs are filled in:
-- `_savedTermios` declared but not yet used (tui.c)
-- `_sigwinchHandler` defined but not yet registered (tui.c)
 - `signal.h` included but not yet used (runner.c — needed for `kill`/`SIGKILL`)
 
 ---
@@ -214,8 +237,7 @@ The stubs are designed to be tackled roughly in this order:
 
 1. **`OutputMatches`** — pure string processing, no syscalls. Good warm-up.
 2. **`GradeTestCase`** — connects `RunProcess` to the verdict logic. Mechanical once `RunProcess` works.
-3. **`TUIenableRawMode` / `TUIrestoreMode`** — first real syscall pair. Termios is well-documented.
-4. **`TUIreadKey` / `TUIpollKey`** — reading and parsing raw bytes from stdin.
-5. **`TUIonResize`** — signal handling.
-6. **`RunProcess`** — the hardest one: pipes + fork + exec + time-limiting. Save for last.
-7. **`main.c`** — wire everything together into a working TUI grader.
+3. **`RunProcess`** — the hardest one: pipes + fork + exec + time-limiting.
+4. **`main.c`** — wire everything together into a working CLI grader (parse args, load test cases, call `GradeProblem`, print results).
+
+TUI stubs (`TUIenableRawMode`, `TUIreadKey`, `TUIpollKey`, `TUIonResize`) are optional learning exercises and are not on the critical path.

@@ -97,23 +97,43 @@ void ProblemFree(Problem* p) {
  *  └─────────────────────────────────────────────────────────────────────┘ */
 
 int OutputMatches(const char* actual, const char* expected) {
-    /* TODO: implement normalised string comparison — see guide above */
-    int pa = 0, pe = 0;
-    char* nextspace = (char*)expected;
-    int lena = strlen(actual), lene = strlen(expected);
+    const char* a = actual;
+    const char* e = expected;
 
-    while(pa < lena && pe < lene) {
-        while(isspace(actual[pa])) pa++;
-        while(isspace(expected[pe])) pe++;
-        while(!isspace(*nextspace)) nextspace++;
-        if (strncmp(actual+pa, expected+pe, nextspace-(expected+pe)) != 0 )
+    while (1) {
+        /* find the end of each current line (stop at \n or \0) */
+        const char* aEnd = a; while (*aEnd && *aEnd != '\n') aEnd++;
+        const char* eEnd = e; while (*eEnd && *eEnd != '\n') eEnd++;
+
+        /* trim trailing spaces, tabs, and \r from each line */
+        const char* aTrim = aEnd;
+        while (aTrim > a && (*(aTrim-1) == ' ' || *(aTrim-1) == '\t' || *(aTrim-1) == '\r'))
+            aTrim--;
+        const char* eTrim = eEnd;
+        while (eTrim > e && (*(eTrim-1) == ' ' || *(eTrim-1) == '\t' || *(eTrim-1) == '\r'))
+            eTrim--;
+
+        int aLen = (int)(aTrim - a);
+        int eLen = (int)(eTrim - e);
+
+        if (aLen != eLen || (aLen > 0 && strncmp(a, e, (size_t)aLen) != 0))
             return 0;
 
-        pa++; pe++; nextspace++;
-    }    
-    
-    
-    return 1;
+        /* advance past the newline */
+        a = aEnd; if (*a == '\n') a++;
+        e = eEnd; if (*e == '\n') e++;
+
+        /* check whether all remaining content on each side is blank lines only */
+        int aDone = 1, eDone = 1;
+        const char* p;
+        for (p = a; *p; p++)
+            if (*p != '\n' && *p != '\r' && *p != ' ' && *p != '\t') { aDone = 0; break; }
+        for (p = e; *p; p++)
+            if (*p != '\n' && *p != '\r' && *p != ' ' && *p != '\t') { eDone = 0; break; }
+
+        if (aDone && eDone) return 1;
+        if (aDone != eDone) return 0;   /* one side has more content */
+    }
 }
 
 
@@ -152,10 +172,28 @@ int GradeTestCase(const char*    solutionCmd,
     result->verdict   = VERDICT_PENDING;
     result->elapsedMs = 0;
 
-    /* TODO: implement steps 1-5 described above */
-    (void)solutionCmd;
-    (void)tc;
-    return -1;
+    RunConfig cfg;
+    cfg.cmd         = solutionCmd;
+    cfg.stdinData   = tc->inputStr;
+    cfg.timeLimitMs = tc->timeLimitMs;
+
+    RunResult run;
+    if (RunProcess(&cfg, &run) != 0) return -1;
+
+    result->elapsedMs = run.elapsedMs;
+
+    if (run.timedOut) {
+        result->verdict = VERDICT_TLE;
+    } else if (run.exitCode != 0) {
+        result->verdict = VERDICT_RE;
+    } else if (OutputMatches(run.stdoutBuf ? run.stdoutBuf : "", tc->expectedOutput)) {
+        result->verdict = VERDICT_AC;
+    } else {
+        result->verdict = VERDICT_WA;
+    }
+
+    RunResultFree(&run);
+    return 0;
 }
 
 

@@ -1,4 +1,4 @@
 # PSrunner 
-PSrunner is a multi-platform TUI program to grade an algorithm problem. <br>
+PSrunner is a multi-platform program to grade an algorithm problem. <br>
 
 Built only with C!

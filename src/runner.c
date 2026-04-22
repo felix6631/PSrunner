@@ -10,6 +10,7 @@
 #  include <unistd.h>      /* pipe, fork, dup2, read, write, close, execvp */
 #  include <sys/wait.h>    /* waitpid, WIFEXITED, WEXITSTATUS, WNOHANG     */
 #  include <sys/time.h>    /* gettimeofday                                 */
+#  include <sys/select.h>  /* select, fd_set                               */
 #  include <signal.h>      /* kill, SIGKILL                                */
 #  include <errno.h>
 #elif defined(_WIN32)
@@ -152,9 +153,138 @@ static char* _readAll(int fd) {
 int RunProcess(const RunConfig* cfg, RunResult* out) {
     memset(out, 0, sizeof(*out));
 
-    /* TODO: implement steps 1-5 described above */
-    (void)cfg;   /* suppress unused-parameter warning until implemented */
-    return -1;
+    int inPipe[2], outPipe[2], errPipe[2];
+    if (pipe(inPipe) < 0 || pipe(outPipe) < 0 || pipe(errPipe) < 0)
+        return -1;
+
+    struct timeval t0;
+    gettimeofday(&t0, NULL);
+
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+
+    if (pid == 0) {
+        /* child: wire pipes to stdin/stdout/stderr then exec */
+        dup2(inPipe[0],  STDIN_FILENO);
+        dup2(outPipe[1], STDOUT_FILENO);
+        dup2(errPipe[1], STDERR_FILENO);
+        close(inPipe[0]);  close(inPipe[1]);
+        close(outPipe[0]); close(outPipe[1]);
+        close(errPipe[0]); close(errPipe[1]);
+        char* args[] = { (char*)cfg->cmd, NULL };
+        execvp(args[0], args);
+        _exit(1);
+    }
+
+    /* parent: close child-side ends */
+    close(inPipe[0]);
+    close(outPipe[1]);
+    close(errPipe[1]);
+
+    /* feed stdin then signal EOF */
+    if (cfg->stdinData) {
+        size_t left = strlen(cfg->stdinData);
+        const char* ptr = cfg->stdinData;
+        while (left > 0) {
+            ssize_t w = write(inPipe[1], ptr, left);
+            if (w <= 0) break;
+            ptr += (size_t)w;
+            left -= (size_t)w;
+        }
+    }
+    close(inPipe[1]);
+
+    /* drain stdout and stderr with select() to avoid pipe-buffer deadlock */
+    size_t outCap = 4096, outLen = 0;
+    size_t errCap = 4096, errLen = 0;
+    char*  outBuf = malloc(outCap);
+    char*  errBuf = malloc(errCap);
+    if (!outBuf || !errBuf) {
+        free(outBuf); free(errBuf);
+        kill(pid, SIGKILL); waitpid(pid, NULL, 0);
+        close(outPipe[0]); close(errPipe[0]);
+        return -1;
+    }
+    outBuf[0] = '\0';
+    errBuf[0] = '\0';
+
+    int outDone = 0, errDone = 0, status = 0;
+
+    while (!outDone || !errDone) {
+        /* time-limit check */
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        int elapsed = (int)((now.tv_sec  - t0.tv_sec)  * 1000 +
+                            (now.tv_usec - t0.tv_usec) / 1000);
+        if (elapsed >= cfg->timeLimitMs) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            out->timedOut = 1;
+            break;
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        int maxFd = 0;
+        if (!outDone) { FD_SET(outPipe[0], &rfds); if (outPipe[0] > maxFd) maxFd = outPipe[0]; }
+        if (!errDone) { FD_SET(errPipe[0], &rfds); if (errPipe[0] > maxFd) maxFd = errPipe[0]; }
+
+        struct timeval tv = { 0, 10000 };   /* 10 ms polling interval */
+        select(maxFd + 1, &rfds, NULL, NULL, &tv);
+
+        if (!outDone && FD_ISSET(outPipe[0], &rfds)) {
+            char tmp[4096];
+            ssize_t n = read(outPipe[0], tmp, sizeof(tmp));
+            if (n <= 0) {
+                outDone = 1;
+            } else {
+                if (outLen + (size_t)n + 1 > outCap) {
+                    outCap = (outCap + (size_t)n) * 2;
+                    char* t = realloc(outBuf, outCap);
+                    if (t) outBuf = t;
+                }
+                memcpy(outBuf + outLen, tmp, (size_t)n);
+                outLen += (size_t)n;
+                outBuf[outLen] = '\0';
+            }
+        }
+
+        if (!errDone && FD_ISSET(errPipe[0], &rfds)) {
+            char tmp[4096];
+            ssize_t n = read(errPipe[0], tmp, sizeof(tmp));
+            if (n <= 0) {
+                errDone = 1;
+            } else {
+                if (errLen + (size_t)n + 1 > errCap) {
+                    errCap = (errCap + (size_t)n) * 2;
+                    char* t = realloc(errBuf, errCap);
+                    if (t) errBuf = t;
+                }
+                memcpy(errBuf + errLen, tmp, (size_t)n);
+                errLen += (size_t)n;
+                errBuf[errLen] = '\0';
+            }
+        }
+    }
+
+    close(outPipe[0]);
+    close(errPipe[0]);
+
+    /* reap child (already waited on TLE path above) */
+    if (!out->timedOut)
+        waitpid(pid, &status, 0);
+
+    if (!out->timedOut && WIFEXITED(status))
+        out->exitCode = WEXITSTATUS(status);
+
+    struct timeval t1;
+    gettimeofday(&t1, NULL);
+    out->elapsedMs = (int)((t1.tv_sec  - t0.tv_sec)  * 1000 +
+                           (t1.tv_usec - t0.tv_usec) / 1000);
+
+    out->stdoutBuf = outBuf;
+    out->stderrBuf = errBuf;
+    return 0;
 }
 #endif
 
